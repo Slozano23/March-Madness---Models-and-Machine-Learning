@@ -1,0 +1,443 @@
+---
+title: "NCAA Basketball Analysis"
+author: "Saul, Jackson, Cody"
+date: "4/23/24"
+output:
+  ioslides_presentation: default
+  beamer_presentation:
+    theme: Madrid
+  slidy_presentation: default
+fontsize: 9pt
+graphics: true
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = FALSE, warning = FALSE, fig.align = "center", fig.height = 4, fig.width = 6,  out.width = "75%")
+library(knitr)
+library(tidyverse)
+library(moderndive)
+library(GGally)
+library(tidyverse)
+library(caret)
+library(rpart)  #library for CART
+library(rpart.plot)
+
+cbb <- read_csv("cbb.csv")
+cbb=cbb%>%
+  mutate(win_perc=W/G)
+```
+
+## Outline
+
+In this lecture, we will...
+
+\pause
+
+-   Introduce our what our data contains and interesting findings
+
+-   Discuss Multiple Linear Regression
+
+-   Discuss Regression Tree
+
+-   Discuss Polynomial Regression
+
+-   Compare findings
+
+# Our Data
+
+## Columns
+
+-   This data contained 24 different columns of data from team name,
+    games played and won, two point and three point shooting percentages
+    for themselves and for their match up. There was only four
+    categorical variables: Team name, Conference, Seed and Postseason
+    result which was where they got knocked out.
+
+\pause
+
+-   Our most important variables were BARTHAG (Power Rating), Win
+    percentage, Power 5, Number of games played and Number of games won.
+
+    \pause
+
+    -   Win Percentage (win_perc) and Power 5 (power_5) were created
+        variables by us in order to achieve our goal
+
+## Our Response Variable...
+
+\pause
+
+-   Our response variable was Win Percentage as the number of games
+    played differed from team to team
+
+    -   Win Percentage was found by simply dividing the number of games
+        won by the total number of games played
+
+        \pause
+
+-   Our main goal is to determine how the power rating of a team effects
+    its win percentage across various seasons. Then to determining what
+    model is best for predicting this percentage.
+
+    \pause
+
+-   Our data was also divided by Power 5 which determined whether a team
+    was in a power five conference which are the biggest and most
+    competitive conferences in the nation
+
+# Linear Regression
+
+## Finding relative variables
+
+```{r echo=FALSE, fig.height=3}
+
+pairs=cbb%>%
+  select("3P_O","2P_O","3P_D","2P_D","BARTHAG","win_perc")
+ggpairs(pairs)
+```
+
+-   \pause
+
+    -   Our variable with the most correlation to our response variable
+        was BARTHAG
+
+        -   BARTHAG is a teams power rating, in other words, the chance
+            of beating an average D1 team
+
+    ## Simple Linear Regression
+
+    ```{r echo=FALSE, fig.height=3}
+    #Training and Testing Data
+    trainingInd=sample(1:3523,2466)
+    train_data=cbb[trainingInd,]
+    test_data=cbb[-trainingInd,]
+
+    #Fitting linear model
+    lin_mod=lm(win_perc~BARTHAG,data=train_data)
+    train_data%>%
+      ggplot(aes(x=BARTHAG,y=win_perc))+
+      geom_point()+
+      geom_smooth(method="lm")+
+      theme_minimal()+
+      labs(x="Power Rating",y="Win Percentage",title="Win % vs BARTHAG (Power Rating)")
+    ```
+
+    \pause
+
+    The relationship is decently significant and compared to the rest of
+    our variable it does correlate the most as the more a teams power
+    rating increases, their win percentage does tend to increase as well
+    but not by a significant amount
+
+## Multiple Linear Regression
+
+```{r include=FALSE}
+"Creates Power 5 converence variable"
+#%in% checks if the conference name matches ANY of the values in the list
+#Returns TRUE if the team is in ACC, B10, B12, P12, or SEC
+#Returns FALSE for all other conferences
+train_data$power_5 = ifelse(train_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+
+#If TRUE (team is in Power 5 conference) then assigns "Power 5"
+#If FALSE (team is not in Power 5 conference) then assigns "Non-Power 5"
+# Create power_5 variable in test data
+test_data$power_5 = ifelse(test_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+parallel_mod = lm(win_perc ~ BARTHAG + power_5, data=train_data)
+
+trctrl_mlr <- trainControl(method = "repeatedcv", number = 5, repeats = 10)
+
+mlr<-  train(win_perc ~ BARTHAG + power_5, 
+                   data = train_data, 
+                   method = "lm",
+                   trControl=trctrl_mlr)
+```
+
+```{r echo=FALSE,fig.height=3}
+
+train_data %>%
+  ggplot(aes(x=BARTHAG, y=win_perc)) +
+  geom_point(alpha=.2,aes(color=power_5)) +
+  geom_parallel_slopes(aes(color=power_5),linewidth=1.5) +
+  theme_bw() +
+  labs(x="Power Rating ", y="Win Percentage ", title="Parallel Lines Model: Win % vs BARTHAG by Conference Type",color="Conference Type")
+
+
+```
+
+Teams in a power five conference had a higher average power rating
+compared to teams not in a power five conference. However, the more
+teams in a power conference had a lower win percentage, most likely due
+to being in a more competitive conference overall.
+
+The RMSE for this model is 0.1088913
+
+```         
+```
+
+# Regression Tree
+
+## The Best Tree
+
+\pause
+
+-   RMSE measures how well the regression tree predicts win percentage.
+
+-   As cp increases, RMSE also increases, indicating that pruning the
+    tree too much reduces predictive accuracy.
+
+-   This helps us tune our regression tree by choosing the best cp value
+    that minimizes RMSE
+
+```{r,fig.height=3}
+library(caret)
+library(rpart)  #library for CART
+library(rpart.plot)
+
+train_data <- na.omit(train_data)
+
+trctrl_1 <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+caretTree  <-  train(win_perc ~ BARTHAG + power_5 + ADJ_T + SEED + WAB, 
+                     data = train_data, 
+                     method = "rpart",
+                     trControl=trctrl_1,
+                     tuneGrid = expand.grid(cp=seq(0.001, 0.1, 0.001))
+)
+plot(caretTree)
+
+
+```
+
+## The Best Tree
+
+\small
+
+-   Each split represents a decision rule that helps predict win
+    percentage based on different variables.
+
+-   The deeper the tree, the more splits, which means more predictions.
+
+-   The tree confirms that WAB and BARTHAG are crucial for predicting
+    win percentage, aligning with our expectations.
+
+```{r,fig.height=3}
+library(caret)
+library(rpart)  #library for CART
+library(rpart.plot)
+
+train_data <- na.omit(train_data)
+
+trctrl_1 <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+caretTree  <-  train(win_perc ~ BARTHAG + power_5 + ADJ_T + SEED + WAB, 
+                     data = train_data, 
+                     method = "rpart",
+                     trControl=trctrl_1,
+                     tuneGrid = expand.grid(cp=seq(0.001, 0.1, 0.001))
+)
+
+rpart.plot(caretTree$finalModel)
+
+```
+
+## LM
+
+\pause
+
+-   Some variables, like WAB, BARTHAG, and Power 5, were highly
+    significant, while others, like ADJ_T and some SEED values, were
+    not.
+
+```{r}
+library(caret)
+library(rpart)  #library for CART
+library(rpart.plot)
+
+trctrl_2 <- trainControl(method = "repeatedcv", number = 5, repeats = 10)
+
+caretLM<-  train(win_perc ~ BARTHAG + power_5 + ADJ_T + SEED + WAB, 
+                 data = train_data, 
+                 method = "lm",
+                 trControl=trctrl_2
+)
+
+summary(caretLM)
+```
+
+## Comparing The Models
+
+\pause
+
+-   Intercept Model Performs Better
+
+```{r}
+trctrl_2 <- trainControl(method = "repeatedcv", number = 5, repeats = 10)
+
+caretLM<-  train(win_perc ~ BARTHAG + power_5 + ADJ_T + SEED + WAB, 
+                 data = train_data, 
+                 method = "lm",
+                 trControl=trctrl_2
+)
+
+caretLM$results
+
+
+```
+
+## Comparing The Models
+
+\small
+
+-   CP Model is Worse in Every Metric
+
+```{r}
+trctrl_2 <- trainControl(method = "repeatedcv", number = 5, repeats = 10)
+
+caretLM<-  train(win_perc ~ BARTHAG + power_5 + ADJ_T + SEED + WAB, 
+                 data = train_data, 
+                 method = "lm",
+                 trControl=trctrl_2
+)
+
+
+
+caretTree$results[caretTree$results$cp==caretTree$bestTune[1,1], ]
+```
+
+# Polynomial Regression
+
+## Which degree should we use?
+
+\small
+
+-   To figure out which degree polynomial to use, we calculated RMSE for
+    each degree
+
+-   3rd degree seems to be the best suitable, after that the RMSE
+    doesn't change much
+
+```{r echo = F, eval = T}
+library(GGally)
+library(tidyverse)
+library(caret)
+cbb <- read_csv("cbb.csv")
+cbb=cbb%>%
+  mutate(win_perc=W/G)
+pairs=cbb%>%
+  select("3P_O","2P_O","TORD","ORB","3P_D","2P_D","BARTHAG","win_perc")
+trainingInd=sample(1:3523,2466)
+train_data=cbb[trainingInd,]
+test_data=cbb[-trainingInd,]
+cbb <- cbb %>%
+  mutate(power_5 = case_when(
+    CONF %in% c("ACC", "B10", "B12", "P12", "SEC") ~ "Power 5",
+    TRUE ~ "Non-Power 5"
+  ))
+train_data$power_5 = ifelse(train_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+
+#If TRUE (team is in Power 5 conference) then assigns "Power 5"
+#If FALSE (team is not in Power 5 conference) then assigns "Non-Power 5"
+# Create power_5 variable in test data
+test_data$power_5 = ifelse(test_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+
+
+train_data_complete <- train_data %>%
+  drop_na()  # Remove any rows with NA values
+
+# also clean the test data
+test_data_complete <- test_data %>%
+  drop_na()
+
+# Create models with different polynomial degrees
+poly_models <- list()
+rmse_values <- numeric(10)
+
+for (degree in 1:10) {
+  # Create model predicting win_perc from BARTHAG
+  poly_models[[degree]] <- lm(win_perc ~ poly(BARTHAG, degree, raw = TRUE) +
+                                power_5 + ADJ_T + SEED + POSTSEASON,
+                              data = train_data)
+
+  # Calculate RMSE
+  rmse_values[degree] <- sqrt(mean(poly_models[[degree]]$residuals^2))
+}
+
+# Compare models
+comparison <- data.frame(
+  Degree = 1:10,
+  RMSE = rmse_values
+)
+
+
+# Plot RMSE by polynomial degree
+plot(comparison$Degree, comparison$RMSE, type = "b",
+     xlab = "Polynomial Degree", ylab = "RMSE",
+     main = "RMSE by Polynomial Degree")
+```
+
+## Visualizing the Polynomial Regression
+
+-   Here is a graph of the 3rd degree polynomial
+
+-   Cross Validated RMSE: 0.08895640
+
+```{r echo = F, eval = T, fig.height=4, out.width = "65%"}
+library(GGally)
+library(tidyverse)
+library(caret)
+cbb <- read_csv("cbb.csv")
+cbb=cbb%>%
+  mutate(win_perc=W/G)
+pairs=cbb%>%
+  select("3P_O","2P_O","TORD","ORB","3P_D","2P_D","BARTHAG","win_perc")
+trainingInd=sample(1:3523,2466)
+train_data=cbb[trainingInd,]
+test_data=cbb[-trainingInd,]
+cbb <- cbb %>%
+  mutate(power_5 = case_when(
+    CONF %in% c("ACC", "B10", "B12", "P12", "SEC") ~ "Power 5",
+    TRUE ~ "Non-Power 5"
+  ))
+train_data$power_5 = ifelse(train_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+
+#If TRUE (team is in Power 5 conference) then assigns "Power 5"
+#If FALSE (team is not in Power 5 conference) then assigns "Non-Power 5"
+# Create power_5 variable in test data
+test_data$power_5 = ifelse(test_data$CONF %in% c("ACC", "B10", "B12", "P12", "SEC"), "Power 5", "Non-Power 5")
+
+
+train_data_complete <- train_data %>%
+  drop_na()  # Remove any rows with NA values
+
+# also clean the test data
+test_data_complete <- test_data %>%
+  drop_na()
+
+ggplot(train_data, aes(x = BARTHAG, y = win_perc, color = power_5)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = TRUE) +
+  theme_minimal() +
+  labs(
+    title = "Polynomial Regression: Win % vs BARTHAG²",
+    x = "BARTHAG",
+    y = "Win Percentage",
+    color = "Conference Type"
+  )
+```
+
+\normalsize
+
+-   Power 5 teams on average have a much higher power rating than
+    Non-Power 5 teams, even with win percentage being relatively close
+    between the two
+
+# Conclusion
+
+## Results
+
+```{r}
+
+```
