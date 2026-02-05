@@ -1,0 +1,270 @@
+---
+title: "SSRD"
+output: html_document
+date: "2025-04-08"
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(knitr)
+library(tidyverse)
+library(moderndive)
+library(GGally)
+library(tidyverse)
+library(caret)
+library(rpart)  #library for CART
+library(rpart.plot)
+
+
+
+cbb <- read_csv("cbb.csv")
+cbb=cbb%>%
+  mutate(POSTSEASON=as.factor(POSTSEASON))%>%
+  mutate(POSTSEASON=fct_relevel(POSTSEASON,'Champions','2ND','F4','E8','S16','R32','R64','R68'))
+levels(cbb$POSTSEASON)
+```
+
+```{r}
+#Removes teams that did not make it to a march madness tournamnet
+MARCH_MAD <- cbb[!is.na(cbb$POSTSEASON) & cbb$POSTSEASON != "N/A", ]
+
+MARCH_MAD=MARCH_MAD%>%
+  select(-'...1')
+write_csv(MARCH_MAD,'MARCH_MADNESS')
+```
+
+```{r message=FALSE}
+
+mm_pairs=MARCH_MAD%>%
+  select(ADJOE,EFG_O,`2P_O`,`3P_O`,TOR,BARTHAG,POSTSEASON)
+
+pairs_plot=ggpairs(mm_pairs,aes(color=MARCH_MAD$POSTSEASON))
+pairs_plot
+```
+
+```{r}
+#Points scored per 100 possessions (ADJOE)
+ADJOE_Plot=MARCH_MAD %>%
+  ggplot(aes(x=POSTSEASON, y=ADJOE, fill=POSTSEASON)) +
+  geom_boxplot() +
+  theme_bw() 
+ADJOE_Plot
+
+#ggsave("PostSeason VS ADJOE.png", plot = ADJOE_Plot, width = 8, height = 6, dpi = 300)
+
+#Points allowed per 100 possessions (ADJDE)
+ADJDE_Plot=MARCH_MAD %>%
+  ggplot(aes(x=POSTSEASON, y=ADJDE, fill=POSTSEASON)) +
+  geom_boxplot() +
+  theme_bw() 
+ADJDE_Plot
+
+#ggsave("PostSeason VS ADJDE.png", plot = ADJDE_Plot, width = 8, height = 6, dpi = 300)
+
+```
+
+```{r}
+
+BARTHAG_Plot=MARCH_MAD %>%
+  ggplot(aes(x=POSTSEASON, y=BARTHAG, fill=POSTSEASON)) +
+  geom_boxplot() +
+  theme_bw() 
+
+BARTHAG_Plot
+#ggsave("PostSeason VS BARTHAG.png", plot = BARTHAG_Plot, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+# Load libraries
+library(ggplot2)
+
+# Create and store the plot in a variable
+postseason_plot <- ggplot(MARCH_MAD, aes(x = POSTSEASON, fill = power_5)) +
+  geom_bar(position = "dodge") +
+  labs(title = "POSTSEASON Outcomes by Power 5 Conference Membership",
+       x = "POSTSEASON Outcome",
+       y = "Number of Teams",
+       fill = "Power 5 Member") +
+  theme_bw()
+
+postseason_plot
+# Save the plot to a PNG file
+ggsave("postseason_by_power5.png", plot = postseason_plot, width = 8, height = 6, dpi = 300)
+
+```
+
+Tree
+
+```{r}
+library(rpart)
+library(caret)
+
+
+#Creating Train and Test Data
+trainingInd=sample(1:680,680*.7)
+MARCH_MAD.train=MARCH_MAD[trainingInd,]
+MARCH_MAD.test=MARCH_MAD[-trainingInd,]
+```
+
+```{r}
+
+#Decision Trees
+
+classTree<- rpart(POSTSEASON ~ ADJOE+EFG_O+`2P_O`+`3P_O`+TOR+BARTHAG,
+                  data = MARCH_MAD.train,
+                  method = "class")
+library(rpart.plot)
+rpart.plot(classTree)
+
+### Plot CP
+plotcp(classTree)
+
+printcp(classTree)
+
+
+## WHICH CP
+minCP<-classTree$cptable[which.min(classTree$cptable[,"xerror"]),"CP"]
+
+
+# Open PNG device
+png("Decision Tree.png", width = 1000, height = 800)
+
+# Pass your tree into rpart.plot
+rpart.plot(classTree, type = 4, extra = 104)
+
+# Close the file device
+dev.off()
+
+```
+
+```{r}
+library(rpart.plot)
+
+prune_classTree <- prune(classTree, cp = minCP )
+rpart.plot(prune_classTree )
+
+# Open PNG device
+png("Pruned Decision Tree.png", width = 1000, height = 800)
+
+# Pass your tree into rpart.plot
+rpart.plot(prune_classTree, type = 4, extra = 104)
+
+# Close the file device
+dev.off()
+```
+
+```{r}
+## DEFAULT TREE 
+### PREDICT
+predTree1<-predict(classTree , MARCH_MAD.test, type="class")
+
+### CONFUSION MATRIX
+cmTree1<-table(MARCH_MAD.test$POSTSEASON, predTree1)
+cmTree1
+
+#### CORRECT RATE
+mean(MARCH_MAD.test$POSTSEASON==predTree1)
+
+## PRUNED TREE 
+### PREDICT
+predTree2<-predict(prune_classTree , MARCH_MAD.test, type="class")
+
+### CONFUSION MATRIX
+cmTree2<-table(MARCH_MAD.test$POSTSEASON, predTree2)
+cmTree2
+
+#### CORRECT RATE
+mean(MARCH_MAD.test$POSTSEASON==predTree2)
+```
+
+```{r}
+# Convert confusion matrix to a data frame
+cm_df <- as.data.frame(cmTree2)
+
+# Rename columns for clarity (optional, depending on structure)
+names(cm_df) <- c("Actual", "Predicted", "Freq")
+
+# Load ggplot2 if not already
+library(ggplot2)
+
+# Plot the heatmap
+prediction_heatmap=ggplot(cm_df, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 4) +
+  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  labs(title = "Confusion Matrix Heatmap (Pruned Decision Tree)",
+       x = "Predicted POSTSEASON",
+       y = "Actual POSTSEASON") +
+  theme_minimal()
+
+prediction_heatmap
+
+#ggsave("Prediction Heatmap.png", plot = prediction_heatmap, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+# Convert confusion matrix to a data frame
+cm_df <- as.data.frame(cmTree2)
+
+# Define ordered POSTSEASON levels from early exit to champion
+postseason_levels <- c("R68", "R64", "R32", "S16", "E8", "F4", "2ND", "Champions")
+
+# Rename columns for clarity
+colnames(cm_df) <- c("Actual", "Predicted", "Freq")
+
+# Set factors with the correct order
+cm_df$Actual <- factor(cm_df$Actual, levels = postseason_levels)
+cm_df$Predicted <- factor(cm_df$Predicted, levels = postseason_levels)
+
+# Create heatmap with x-axis reversed (horizontal flip)
+ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 4) +
+  scale_x_discrete(limits = rev(postseason_levels)) +  # Flip X-axis
+  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  labs(title = "Confusion Matrix Heatmap (Horizontally Flipped)",
+       x = "Actual POSTSEASON",
+       y = "Predicted POSTSEASON") +
+  theme_minimal()
+
+
+```
+
+```{r}
+classTree2<- rpart(POSTSEASON ~ ADJOE+EFG_O+,
+                  data = MARCH_MAD.train,
+                  method = "class")
+library(rpart.plot)
+rpart.plot(classTree2)
+
+### Plot CP
+plotcp(classTree2)
+
+printcp(classTree2)
+
+
+## WHICH CP
+minCP2<-classTree2$cptable[which.min(classTree2$cptable[,"xerror"]),"CP"]
+
+
+library(rpart.plot)
+
+prune_classTree2 <- prune(classTree2, cp = minCP2 )
+rpart.plot(prune_classTree2,box.palette = 'Blues' )
+
+```
+
+```{r}
+library(cluster)
+mds <- cmdscale(dist(scale(MARCH_MAD[, c("ADJOE", "BARTHAG", "WAB", "win_perc")])))
+mds_df <- as.data.frame(mds)
+mds_df$POSTSEASON <- MARCH_MAD$POSTSEASON
+
+ggplot(mds_df, aes(V1, V2, color = POSTSEASON)) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(title = "MDS Plot: Team Similarity by POSTSEASON Outcome")
+
+```
